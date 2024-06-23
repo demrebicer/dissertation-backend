@@ -7,6 +7,7 @@ import concurrent.futures
 from cachetools import TTLCache, cached
 import pandas as pd
 from fastf1.events import Event
+from constants import *
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
@@ -20,6 +21,27 @@ years_cache = TTLCache(maxsize=100, ttl=86400)  # Cache for 1 day
 drivers_cache = TTLCache(maxsize=100, ttl=86400)
 laps_cache = TTLCache(maxsize=100, ttl=86400)
 telemetry_cache = TTLCache(maxsize=100, ttl=86400)
+
+# Predefined global min and max coordinates from 2021
+PREDEFINED_GLOBAL_MIN_X = -2317
+PREDEFINED_GLOBAL_MAX_X = 7793
+PREDEFINED_GLOBAL_MIN_Y = -4119
+PREDEFINED_GLOBAL_MAX_Y = 13123
+
+# Reference coordinates from 2021 pole sitter's first lap
+REFERENCE_YEAR = 2021
+REFERENCE_DRIVER_CODE = 'HAM'  # Replace with actual pole sitter driver code
+REFERENCE_LAP_NUMBER = 1
+
+# # Function to load the reference coordinates
+# def get_reference_coordinates():
+#     session = load_session(REFERENCE_YEAR, 'Silverstone', 'Race')
+#     reference_x, reference_y, _, _, _ = get_coordinates(session, REFERENCE_DRIVER_CODE, REFERENCE_LAP_NUMBER)
+#     return reference_x[0], reference_y[0]
+
+# REFERENCE_X, REFERENCE_Y = get_reference_coordinates()
+
+
 
 # Check if a given year has Silverstone data
 @cached(years_cache)
@@ -78,30 +100,16 @@ def get_coordinates(session, driver_code, lap_number):
     
     lap = laps.iloc[lap_number - 1]  # Choose the specified lap
     
-    telemetry = lap.get_telemetry()
+    car_data = lap.get_car_data()
+    pos_data = lap.get_pos_data()
     
-    x = telemetry['X'].values
-    y = telemetry['Y'].values
-    speed = telemetry['Speed'].values
-    brake = telemetry['Brake'].values
-    rpm = telemetry['RPM'].values
+    x = pos_data['X'].values
+    y = pos_data['Y'].values
+    speed = car_data['Speed'].values
+    brake = car_data['Brake'].values
+    rpm = car_data['RPM'].values
     
     return x, y, speed, brake, rpm
-
-# Get the global min and max coordinates for scaling
-@cached(telemetry_cache)
-def get_global_min_max_coordinates(session, drivers):
-    global_min_x, global_max_x = float('inf'), float('-inf')
-    global_min_y, global_max_y = float('inf'), float('-inf')
-
-    for driver in drivers:
-        x, y = get_coordinates(session, driver, 1)
-        global_min_x = min(global_min_x, min(x))
-        global_max_x = max(global_max_x, max(x))
-        global_min_y = min(global_min_y, min(y))
-        global_max_y = max(global_max_y, max(y))
-    
-    return global_min_x, global_max_x, global_min_y, global_max_y
 
 # Define the scale factor based on the global coordinates
 @cached(telemetry_cache)
@@ -161,14 +169,12 @@ async def get_telemetry(request, year, session_type, driver_code, lap_number):
     # Load necessary data
     session.load(laps=True, telemetry=True)
     
-    if session_type == 'R':
-        # Get coordinates for the pole sitter to use as reference and global scaling
-        pole_sitter_driver = get_pole_sitter_driver(year, 'Silverstone')
-        reference_x, reference_y, _, _, _ = get_coordinates(session, pole_sitter_driver, 1)
-    else:
-        # For qualifying, use the selected driver as the reference
-        reference_x, reference_y, _, _, _ = get_coordinates(session, driver_code, lap_number)
+    # Get coordinates for the reference lap (using the first lap of the pole sitter)
+    reference_x, reference_y, _, _, _ = get_coordinates(session, driver_code, 1)
     
+    reference_x = REFERENCE_X
+    reference_y = REFERENCE_Y
+
     drivers = get_drivers(session)
     global_min_x, global_max_x = float('inf'), float('-inf')
     global_min_y, global_max_y = float('inf'), float('-inf')
@@ -180,7 +186,13 @@ async def get_telemetry(request, year, session_type, driver_code, lap_number):
         global_max_x = max(global_max_x, max(x))
         global_min_y = min(global_min_y, min(y))
         global_max_y = max(global_max_y, max(y))
-    
+
+
+    global_min_x = -2317
+    global_max_x = 7793
+    global_min_y = -4119
+    global_max_y = 13123
+        
     scale_factor = get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y)
     
     # Get coordinates, speed, and brake data for the selected driver and lap

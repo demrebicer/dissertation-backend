@@ -14,10 +14,20 @@ fastf1.Cache.enable_cache(cache_dir)
 
 # Yarış verilerini yükleyin ve işleyin
 # Örneğin: 2021 Silverstone Grand Prix için
-session = fastf1.get_session(2022, 'Silverstone', 'Q')
+session = fastf1.get_session(2021, 'Silverstone', 'R')
 session.load()
 
-# Hamiton'nun turlarını seçin
-laps = session.laps.pick_driver('HAM').get_telemetry()
+# Belirli bir turun verilerini seçin
+lap_number = 19  # Burada görmek istediğiniz tur numarasını belirleyin
+selected_lap = session.laps.pick_driver('HAM').pick_lap(lap_number)
 
-laps.to_csv('telemetry.csv')
+# # Seçilen tur için araç verilerini ve pozisyon verilerini alın
+car_data = selected_lap.get_car_data()
+pos_data = selected_lap.get_pos_data()
+
+print(car_data)
+print(pos_data)
+
+# Pozisyon verilerini CSV dosyasına kaydedin
+pos_data.to_csv('pos_data.csv')
+car_data.to_csv('car_data.csv')
