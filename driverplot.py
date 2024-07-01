@@ -14,7 +14,7 @@ fastf1.Cache.enable_cache(cache_dir)
 
 # Yarış verilerini yükleyin ve işleyin
 # Örneğin: 2021 Silverstone Grand Prix için
-session = fastf1.get_session(2022, 'Silverstone', 'R')
+session = fastf1.get_session(2018, 'Silverstone', 'R')
 session.load()
 
 # Gasly'nin turlarını seçin

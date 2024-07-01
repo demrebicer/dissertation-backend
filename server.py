@@ -1,12 +1,10 @@
-from sanic import Sanic, response
+from sanic import Sanic
 from sanic.response import json
-from sanic_cors import CORS, cross_origin
+from sanic_cors import CORS
 import fastf1
-import os
 import concurrent.futures
 from cachetools import TTLCache, cached
 import pandas as pd
-from fastf1.events import Event
 from constants import *
 
 # Enable cache
@@ -21,27 +19,6 @@ years_cache = TTLCache(maxsize=100, ttl=86400)  # Cache for 1 day
 drivers_cache = TTLCache(maxsize=100, ttl=86400)
 laps_cache = TTLCache(maxsize=100, ttl=86400)
 telemetry_cache = TTLCache(maxsize=100, ttl=86400)
-
-# Predefined global min and max coordinates from 2021
-PREDEFINED_GLOBAL_MIN_X = -2317
-PREDEFINED_GLOBAL_MAX_X = 7793
-PREDEFINED_GLOBAL_MIN_Y = -4119
-PREDEFINED_GLOBAL_MAX_Y = 13123
-
-# Reference coordinates from 2021 pole sitter's first lap
-REFERENCE_YEAR = 2021
-REFERENCE_DRIVER_CODE = 'HAM'  # Replace with actual pole sitter driver code
-REFERENCE_LAP_NUMBER = 1
-
-# # Function to load the reference coordinates
-# def get_reference_coordinates():
-#     session = load_session(REFERENCE_YEAR, 'Silverstone', 'Race')
-#     reference_x, reference_y, _, _, _ = get_coordinates(session, REFERENCE_DRIVER_CODE, REFERENCE_LAP_NUMBER)
-#     return reference_x[0], reference_y[0]
-
-# REFERENCE_X, REFERENCE_Y = get_reference_coordinates()
-
-
 
 # Check if a given year has Silverstone data
 @cached(years_cache)
@@ -75,14 +52,6 @@ def load_session(year, event_name, session_type):
     session = fastf1.get_session(year, event_name, session_type)
     session.load()
     return session
-
-# Get the pole sitter's driver number from the qualifying session
-@cached(drivers_cache)
-def get_pole_sitter_driver(year, event_name):
-    qualifying_session = fastf1.get_session(year, event_name, 'Q')
-    qualifying_session.load()
-    pole_sitter_driver = qualifying_session.laps.pick_fastest().Driver
-    return pole_sitter_driver
 
 # Get all drivers in the race session
 @cached(drivers_cache)
@@ -142,7 +111,6 @@ def get_lap_weather(session, lap_start_time, lap_duration):
     
     return rain
 
-
 @app.route('/years', methods=['GET'])
 async def get_years(request):
     years = get_available_years()
@@ -175,23 +143,10 @@ async def get_telemetry(request, year, session_type, driver_code, lap_number):
     reference_x = REFERENCE_X
     reference_y = REFERENCE_Y
 
-    drivers = get_drivers(session)
-    global_min_x, global_max_x = float('inf'), float('-inf')
-    global_min_y, global_max_y = float('inf'), float('-inf')
-    
-    # Calculate global min and max coordinates for scaling in one pass
-    for driver in drivers:
-        x, y, _, _, _ = get_coordinates(session, driver, 1)
-        global_min_x = min(global_min_x, min(x))
-        global_max_x = max(global_max_x, max(x))
-        global_min_y = min(global_min_y, min(y))
-        global_max_y = max(global_max_y, max(y))
-
-
-    global_min_x = -2317
-    global_max_x = 7793
-    global_min_y = -4119
-    global_max_y = 13123
+    global_min_x = PREDEFINED_GLOBAL_MIN_X
+    global_max_x = PREDEFINED_GLOBAL_MAX_X
+    global_min_y = PREDEFINED_GLOBAL_MIN_Y
+    global_max_y = PREDEFINED_GLOBAL_MAX_Y
         
     scale_factor = get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y)
     
@@ -247,9 +202,6 @@ async def get_telemetry(request, year, session_type, driver_code, lap_number):
                 'flag': row['Status']
             })
 
-    # Retrieve session timestamps
-    telemetry = lap.get_telemetry()
-
     # Check if it was raining during the selected lap
     rain = get_lap_weather(session, lap['LapStartTime'], lap_duration)
 
@@ -262,7 +214,6 @@ async def get_telemetry(request, year, session_type, driver_code, lap_number):
         'flags': flag_data,  # Include flag data with start and end times
         'is_rain': rain,  # Include rain information for the selected lap
     })
-
 
 
 # Run the app
