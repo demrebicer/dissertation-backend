@@ -8,6 +8,7 @@ import pandas as pd
 from constants import *
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
+import fastf1.api
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
@@ -301,6 +302,37 @@ async def get_all_telemetry(request, year, session_type, lap_number):
         all_telemetry_data.update(result)
 
     return json(all_telemetry_data)
+
+def convert_timedelta_to_str(df):
+    for column in df.select_dtypes(include=['timedelta']):
+        df[column] = df[column].apply(lambda x: str(x.total_seconds()) if not pd.isnull(x) else None)
+    return df
+
+def convert_special_values_to_null(df):
+    df = df.replace([pd.NaT, np.nan], None)
+    return df
+
+@app.get('/timing/<year:int>/<session_type>')
+async def get_timing(request, year, session_type):
+    session = fastf1.get_session(year, 'Silverstone', session_type)
+    
+    # Load necessary data
+    session.load(laps=True, telemetry=True)
+
+    print(session.drivers)
+
+    laps_data, stream_data = fastf1.api.timing_data(session.api_path)
+    
+    laps_data = convert_timedelta_to_str(laps_data)
+    laps_data = convert_special_values_to_null(laps_data)
+
+    stream_data = convert_timedelta_to_str(stream_data)
+    stream_data = convert_special_values_to_null(stream_data)
+
+    return json({
+        'laps_data': laps_data.to_dict(orient='records'),
+        'stream_data': stream_data.to_dict(orient='records')
+    })
 
 
 # Run the app

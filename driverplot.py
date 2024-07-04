@@ -17,11 +17,18 @@ fastf1.Cache.enable_cache(cache_dir)
 session = fastf1.get_session(2021, 'Silverstone', 'R')
 session.load()
 
-laps = session.laps.pick_driver('GAS')
+laps = session.laps.pick_driver('VER')
+
+#save the lap data to a csv file
+laps.to_csv('ver_laps.csv', index=False)
 
 # Örnek olarak ilk turu kullanalım
 lap = laps.iloc[0]  # İlk turu seç
+
 telemetry = lap.get_telemetry()
+
+#save the telemetry data to a csv file
+telemetry.to_csv('ver_telemetry.csv', index=False)
 
 # Telemetriden X ve Y koordinatlarını alın
 x = telemetry['X'].values

@@ -1,35 +1,77 @@
-import matplotlib.pyplot as plt
+import fastf1
+import pandas as pd
 
-import fastf1.plotting
+import fastf1.api
+
+# FastF1'i initialize et ve cache directory'sini ayarla
+fastf1.Cache.enable_cache('f1cache')
+
+# Silverstone yarışını yükle (2021 sezonu, yarış kodu 10)
+session = fastf1.get_session(2021, 'Silverstone', 'R')
+
+# Verileri yükle
+session.load()
+
+session_drivers = session.drivers
+
+print(session.drivers)
+
+print(session.get_driver('33'))
+
+#Create json like enum for driver numbers and Abbreviation
+#{'44': 'HAM', '16': 'LEC', '77': 'BOT', '4': 'NOR', '3': 'RIC', '55': 'SAI', '14': 'ALO', '18': 'STR', '31': 'OCO', '22': 'TSU', '10': 'GAS', '63': 'RUS', '99': 'GIO', '6': 'LAT', '7': 'RAI', '11': 'PER', '9': 'MAZ', '47': 'MSC', '5': 'VET', '33': 'VER'}
+driver_enum = {}
+
+for driver in session.drivers:
+    driver_enum[driver] = session.get_driver(driver).Abbreviation
 
 
-# Load FastF1's dark color scheme
-fastf1.plotting.setup_mpl(misc_mpl_mods=False)
+# Timing data'yı al
+laps_data, stream_data = fastf1.api.timing_data(session.api_path)
 
-session = fastf1.get_session(2023, 1, 'R')
-session.load(telemetry=False, weather=False)
+# Sürücü numaralarından oluşan set
+laps_drivers = set(laps_data['Driver'].unique())
+stream_drivers = set(stream_data['Driver'].unique())
 
-fig, ax = plt.subplots(figsize=(8.0, 4.9))
+# Session sürücülerinin verisi olmayanları kontrol et
+laps_missing_drivers = set(session_drivers) - laps_drivers
+stream_missing_drivers = set(session_drivers) - stream_drivers
 
-for drv in session.drivers:
-    drv_laps = session.laps.pick_driver(drv)
+# print("Laps data missing drivers:", laps_missing_drivers)
+# print("Stream data missing drivers:", stream_missing_drivers)
 
-    #export the data to a csv file
-    drv_laps.to_csv('data.csv', index=False)
+missing_drivers = laps_missing_drivers.union(stream_missing_drivers)
+print("Total missing drivers:", missing_drivers)
 
-    abb = drv_laps['Driver'].iloc[0]
-    color = fastf1.plotting.driver_color(abb)
+for driver in missing_drivers:
 
-    ax.plot(drv_laps['LapNumber'], drv_laps['Position'],
-            label=abb, color=color)
+    driver_info = session.get_driver(driver)
+
+    driver_short_name = driver_info.Abbreviation
+
+    laps = session.laps.pick_driver(driver)
+
+    lap = laps.iloc[0]  # İlk turu seç
+
+    telemetry = lap.get_telemetry()
+
+    telemetry_data = telemetry[['RPM', 'Speed', 'nGear', 'Throttle', 'Brake', 'DRS']]
+
+    # Sabit veri kontrolü
+    same_data_count = (telemetry_data.shift() == telemetry_data).all(axis=1).astype(int).groupby(telemetry_data.index // 40).sum()
+    constant_data = same_data_count[same_data_count == 40]
+
+    if not constant_data.empty:
+        session_time = telemetry['SessionTime'].iloc[constant_data.index[0] * 40]
+        print(f"Sürücü {driver_short_name} yarış dışı kaldı. SessionTime: {session_time}")
 
 
-ax.set_ylim([20.5, 0.5])
-ax.set_yticks([1, 5, 10, 15, 20])
-ax.set_xlabel('Lap')
-ax.set_ylabel('Position')
 
-ax.legend(bbox_to_anchor=(1.0, 1.02))
-plt.tight_layout()
+#DriverName diye bir sütun ekle 3. sütun olacka bu
+# laps_data['DriverName'] = laps_data['Driver'].map(driver_enum)
+laps_data.insert(2, 'DriverName', laps_data['Driver'].map(driver_enum))
+# DataFrame'leri CSV olarak kaydet
+laps_data.to_csv('2021_silverstone_laps_data.csv', index=False)
+stream_data.to_csv('2021_silverstone_stream_data.csv', index=False)
 
-plt.show()
+print("Veriler CSV olarak kaydedildi.")
