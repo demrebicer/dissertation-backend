@@ -14,13 +14,11 @@ fastf1.Cache.enable_cache(cache_dir)
 
 # Yarış verilerini yükleyin ve işleyin
 # Örneğin: 2021 Silverstone Grand Prix için
-session = fastf1.get_session(2018, 'Silverstone', 'R')
+session = fastf1.get_session(2021, 'Silverstone', 'R')
 session.load()
 
-# Gasly'nin turlarını seçin
-laps = session.laps.pick_driver('HAM')
+laps = session.laps.pick_driver('GAS')
 
-# Gasly'nin tur telemetrisini alın
 # Örnek olarak ilk turu kullanalım
 lap = laps.iloc[0]  # İlk turu seç
 telemetry = lap.get_telemetry()
