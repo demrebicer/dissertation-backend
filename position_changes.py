@@ -14,9 +14,11 @@ session.load()
 
 session_drivers = session.drivers
 
-print(session.drivers)
+print(session.session_start_time)
 
-print(session.get_driver('33'))
+# print(session.drivers)
+
+# print(session.get_driver('33'))
 
 #Create json like enum for driver numbers and Abbreviation
 #{'44': 'HAM', '16': 'LEC', '77': 'BOT', '4': 'NOR', '3': 'RIC', '55': 'SAI', '14': 'ALO', '18': 'STR', '31': 'OCO', '22': 'TSU', '10': 'GAS', '63': 'RUS', '99': 'GIO', '6': 'LAT', '7': 'RAI', '11': 'PER', '9': 'MAZ', '47': 'MSC', '5': 'VET', '33': 'VER'}
@@ -45,9 +47,7 @@ print("Total missing drivers:", missing_drivers)
 
 for driver in missing_drivers:
 
-    driver_info = session.get_driver(driver)
-
-    driver_short_name = driver_info.Abbreviation
+    driver_short_name = session.get_driver(driver).Abbreviation
 
     laps = session.laps.pick_driver(driver)
 
@@ -64,7 +64,6 @@ for driver in missing_drivers:
     if not constant_data.empty:
         session_time = telemetry['SessionTime'].iloc[constant_data.index[0] * 40]
         print(f"Sürücü {driver_short_name} yarış dışı kaldı. SessionTime: {session_time}")
-
 
 
 #DriverName diye bir sütun ekle 3. sütun olacka bu

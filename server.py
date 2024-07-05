@@ -319,17 +319,114 @@ async def get_timing(request, year, session_type):
     # Load necessary data
     session.load(laps=True, telemetry=True)
 
-    print(session.drivers)
+    session_drivers = session.drivers
+
+    driver_enum = {}
+
+    for driver in session.drivers:
+        driver_enum[driver] = session.get_driver(driver).Abbreviation
 
     laps_data, stream_data = fastf1.api.timing_data(session.api_path)
     
+    # Sürücü numaralarından oluşan set
+    laps_drivers = set(laps_data['Driver'].unique())
+    stream_drivers = set(stream_data['Driver'].unique())
+
+    # Session sürücülerinin verisi olmayanları kontrol et
+    laps_missing_drivers = set(session_drivers) - laps_drivers
+    stream_missing_drivers = set(session_drivers) - stream_drivers
+
+    # print("Laps data missing drivers:", laps_missing_drivers)
+    # print("Stream data missing drivers:", stream_missing_drivers)
+
+    missing_drivers = laps_missing_drivers.union(stream_missing_drivers)
+    print("Total missing drivers:", missing_drivers)
+
+    new_stream_data = []
+    new_laps_data = []
+    
+    for driver in missing_drivers:
+
+        driver_info = session.get_driver(driver)
+        
+        driver_short_name = driver_info.Abbreviation
+
+        laps = session.laps.pick_driver(driver)
+
+        lap = laps.iloc[0]  # İlk turu seç
+
+        telemetry = lap.get_telemetry()
+
+        telemetry_data = telemetry[['RPM', 'Speed', 'nGear', 'Throttle', 'Brake', 'DRS']]
+
+        # Sabit veri kontrolü
+        same_data_count = (telemetry_data.shift() == telemetry_data).all(axis=1).astype(int).groupby(telemetry_data.index // 40).sum()
+        constant_data = same_data_count[same_data_count == 40]
+
+        if not constant_data.empty:
+            session_time_first = telemetry['SessionTime'].iloc[0]
+            session_time_last = telemetry['SessionTime'].iloc[constant_data.index[0] * 40]
+            print(f"Sürücü {driver_short_name} yarış dışı kaldı. SessionTime: {session_time_last}")
+
+            new_stream_data.append({
+                'Time': session_time_first,
+                'Driver': driver,
+                'Position': driver_info.GridPosition,
+                'GapToLeader': None,
+                'IntervalToPositionAhead': None
+            })
+            
+            new_stream_data.append({
+                'Time': session_time_last,
+                'Driver': driver,
+                'Position': driver_info.Position,
+                'GapToLeader': None,
+                'IntervalToPositionAhead': None
+            })
+
+            new_laps_data.append({
+                'Time': laps.iloc[0].Time,
+                'Driver': driver,
+                'NumberOfLaps': 1,
+                'NumberOfPitStops': 0,
+                'PitOutTime': None,
+                'PitInTime': None,
+                'Sector1Time': None,
+                'Sector2Time': None,
+                'Sector3Time': None,
+                'Sector1SessionTime': None,
+                'Sector2SessionTime': None,
+                'Sector3SessionTime': None,
+                'SpeedI1': None,
+                'SpeedI2': None,
+                'SpeedFL': None,
+                'SpeedST': None,
+                'IsPersonalBest': "FALSE",
+            })
+
+    stream_data = pd.concat([stream_data, pd.DataFrame(new_stream_data)])
+    laps_data = pd.concat([laps_data, pd.DataFrame(new_laps_data)])
+
+    laps_data.insert(2, 'DriverName', laps_data['Driver'].map(driver_enum))
+    laps_data.insert(3, 'TeamColor', laps_data['Driver'].map(lambda x: "#" + session.get_driver(x).TeamColor))
+
+    stream_data.insert(2, 'DriverName', stream_data['Driver'].map(driver_enum))
+
     laps_data = convert_timedelta_to_str(laps_data)
     laps_data = convert_special_values_to_null(laps_data)
 
     stream_data = convert_timedelta_to_str(stream_data)
     stream_data = convert_special_values_to_null(stream_data)
 
+    #Find session end time by checkling last lap time last driver finished is end of session
+    total_laps = session.total_laps
+    last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
+    session_end_time = last_lap_data['Time'].max()
+
     return json({
+        'total_laps': total_laps,
+        'session_start_time': str(session.session_start_time.total_seconds()),
+        'session_end_time': str(session_end_time),
         'laps_data': laps_data.to_dict(orient='records'),
         'stream_data': stream_data.to_dict(orient='records')
     })
