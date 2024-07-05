@@ -418,7 +418,16 @@ async def get_timing(request, year, session_type):
     stream_data = convert_timedelta_to_str(stream_data)
     stream_data = convert_special_values_to_null(stream_data)
 
-    #Find session end time by checkling last lap time last driver finished is end of session
+    # Tamamlanan tur ve sürücü durumu verilerini ekleyin
+    completed_laps_data = {}
+    driver_status_data = {}
+
+    for driver in session.drivers:
+        laps = session.laps.pick_driver(driver)
+        completed_laps_data[driver] = len(laps)
+        driver_status_data[driver] = "Finished" if len(laps) == session.total_laps else "+1 Lap" if len(laps) == session.total_laps - 1 else "DNF"
+
+    #Find session end time by checking last lap time last driver finished is end of session
     total_laps = session.total_laps
     last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
     session_end_time = last_lap_data['Time'].max()
@@ -427,10 +436,11 @@ async def get_timing(request, year, session_type):
         'total_laps': total_laps,
         'session_start_time': str(session.session_start_time.total_seconds()),
         'session_end_time': str(session_end_time),
+        'completed_laps': completed_laps_data,
+        'driver_status': driver_status_data,
         'laps_data': laps_data.to_dict(orient='records'),
-        'stream_data': stream_data.to_dict(orient='records')
+        'stream_data': stream_data.to_dict(orient='records'),
     })
-
 
 # Run the app
 if __name__ == '__main__':
