@@ -1,0 +1,2 @@
+Time,Driver,DriverNumber,LapTime,LapNumber,Stint,PitOutTime,PitInTime,Sector1Time,Sector2Time,Sector3Time,Sector1SessionTime,Sector2SessionTime,Sector3SessionTime,SpeedI1,SpeedI2,SpeedFL,SpeedST,IsPersonalBest,Compound,TyreLife,FreshTyre,Team,LapStartTime,LapStartDate,TrackStatus,Position,Deleted,DeletedReason,FastF1Generated,IsAccurate
+0 days 00:34:56.925000,HUL,27,,1.0,1.0,,,,,,,,,,,,,False,HARD,1.0,True,Racing Point,0 days 00:33:22.751000,2020-08-02 13:13:22.765,1,2.0,False,,True,False

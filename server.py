@@ -9,6 +9,8 @@ from constants import *
 from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import fastf1.api
+import asyncio
+
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
@@ -303,6 +305,8 @@ async def get_all_telemetry(request, year, session_type, lap_number):
 
     return json(all_telemetry_data)
 
+
+
 def convert_timedelta_to_str(df):
     for column in df.select_dtypes(include=['timedelta']):
         df[column] = df[column].apply(lambda x: str(x.total_seconds()) if not pd.isnull(x) else None)
@@ -441,6 +445,99 @@ async def get_timing(request, year, session_type):
         'laps_data': laps_data.to_dict(orient='records'),
         'stream_data': stream_data.to_dict(orient='records'),
     })
+
+
+@app.route('/new-telemetry/<year:int>/<session_type>', methods=['GET'])
+async def new_telemetry(request, year, session_type):
+    session = await asyncio.to_thread(fastf1.get_session, year, 'Silverstone', session_type)
+    
+    # Load necessary data
+    await asyncio.to_thread(session.load, laps=True, telemetry=True)
+    
+    # Get unique driver codes
+    driver_codes = session.laps['Driver'].unique()
+    results = {}
+
+    async def process_driver(driver_code):
+        laps = session.laps.pick_driver(driver_code)
+        car_data = laps.get_car_data()
+        pos_data = laps.get_pos_data()
+
+        # Convert SessionTime to total seconds
+        car_data['SessionTime (s)'] = car_data['SessionTime'].dt.total_seconds()
+        pos_data['SessionTime (s)'] = pos_data['SessionTime'].dt.total_seconds()
+        
+        # Calculate lap start and end times
+        laps_info = []
+        driver_info = session.get_driver(driver_code)
+
+        for i in range(len(laps)):
+            lap = laps.iloc[i]
+
+            lap_number = lap['LapNumber']
+            lap_start_time = session.session_start_time.total_seconds() if i == 0 else laps_info[-1]['LapEndTime']
+            lap_end_time = lap['Time'].total_seconds()
+
+            try:
+                lap_duration = lap['LapTime'].total_seconds() if not pd.isnull(lap['LapTime']) else None
+            except IndexError:
+                lap_duration = None
+
+            if lap_duration is None:
+                # Use telemetry data to calculate lap duration if LapTime is missing
+                telemetry_data = laps.pick_lap(lap_number).get_telemetry()
+                if not telemetry_data.empty:
+                    lap_start_time = telemetry_data.iloc[0]['SessionTime'].total_seconds() if i == 0 else lap_start_time
+                    lap_end_time = telemetry_data.iloc[-1]['SessionTime'].total_seconds()
+                    lap_duration = lap_end_time - lap_start_time
+                else:
+                    # Fallback: Estimate lap duration using the average of surrounding laps
+                    previous_laps = laps.iloc[max(0, lap_number - 5):lap_number - 1]
+                    next_laps = laps.iloc[lap_number:min(lap_number + 5, len(laps))]
+                    surrounding_laps = pd.concat([previous_laps, next_laps])
+                    estimated_duration = surrounding_laps['LapTime'].mean().total_seconds() if not surrounding_laps['LapTime'].isnull().all() else 30
+                    lap_duration = estimated_duration
+
+            lap_info = {
+                'LapNumber': lap_number,
+                'LapStartTime': lap_start_time,
+                'LapEndTime': lap_end_time,
+                'LapDuration': lap_duration,
+                'TeamColor': "#" + driver_info.TeamColor,
+            }
+            laps_info.append(lap_info)
+
+        # Telemetry data for each lap
+        def get_telemetry_for_lap(lap_start_time, lap_end_time):
+            lap_telemetry_car = car_data[(car_data['SessionTime (s)'] >= lap_start_time) & (car_data['SessionTime (s)'] < lap_end_time)]
+            lap_telemetry_pos = pos_data[(pos_data['SessionTime (s)'] >= lap_start_time) & (pos_data['SessionTime (s)'] < lap_end_time)]
+            return lap_telemetry_car, lap_telemetry_pos
+
+        for lap in laps_info:
+            lap_telemetry_car, lap_telemetry_pos = get_telemetry_for_lap(lap['LapStartTime'], lap['LapEndTime'])
+
+            adjusted_points = adjust_coordinates(
+                lap_telemetry_pos['X'].values, 
+                lap_telemetry_pos['Y'].values, 
+                REFERENCE_X[0], 
+                REFERENCE_Y[0], 
+                get_scale_factor(PREDEFINED_GLOBAL_MIN_X, PREDEFINED_GLOBAL_MAX_X, PREDEFINED_GLOBAL_MIN_Y, PREDEFINED_GLOBAL_MAX_Y)
+            )
+
+            lap['Telemetry'] = {
+                'GPS_Coordinates': adjusted_points,
+                'Speed': lap_telemetry_car['Speed'].values.tolist(),
+                'Brake': lap_telemetry_car['Brake'].values.tolist(),
+                'RPM': lap_telemetry_car['RPM'].values.tolist(),
+                'SessionTime': lap_telemetry_car['SessionTime (s)'].values.tolist()
+            }
+
+        results[driver_code] = laps_info
+
+    tasks = [process_driver(driver_code) for driver_code in driver_codes]
+    await asyncio.gather(*tasks)
+
+    return json(results)
 
 # Run the app
 if __name__ == '__main__':

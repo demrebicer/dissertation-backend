@@ -1,2 +1,0 @@
-Time,Driver,DriverNumber,LapTime,LapNumber,Stint,PitOutTime,PitInTime,Sector1Time,Sector2Time,Sector3Time,Sector1SessionTime,Sector2SessionTime,Sector3SessionTime,SpeedI1,SpeedI2,SpeedFL,SpeedST,IsPersonalBest,Compound,TyreLife,FreshTyre,Team,LapStartTime,LapStartDate,TrackStatus,Position,Deleted,DeletedReason,FastF1Generated,IsAccurate
-0 days 01:04:25.585000,VER,33,,1.0,1.0,,,,,,,,,,,,,False,MEDIUM,1.0,True,Red Bull Racing,0 days 01:02:22.559000,2021-07-18 14:03:22.569,124,1.0,False,,True,False
