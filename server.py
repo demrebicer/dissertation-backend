@@ -11,7 +11,6 @@ import numpy as np
 import fastf1.api
 import asyncio
 
-
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
 
@@ -20,70 +19,14 @@ app = Sanic("F1TelemetryAPI")
 CORS(app)  # Enable CORS for all routes
 
 # Create caches for different routes
-years_cache = TTLCache(maxsize=100, ttl=86400)  # Cache for 1 day
-drivers_cache = TTLCache(maxsize=100, ttl=86400)
-laps_cache = TTLCache(maxsize=100, ttl=86400)
 telemetry_cache = TTLCache(maxsize=100, ttl=86400)
 
-# Check if a given year has Silverstone data
-@cached(years_cache)
-def check_year_for_silverstone(year):
-    try:
-        schedule = fastf1.get_event_schedule(year)
-        # Find Silverstone in the schedule
-        if 'Silverstone' in schedule['Location'].values:
-            # Check if the race session has driver position data
-            session = fastf1.get_session(year, 'Silverstone', 'Race')
-            session.load()
-            if not session.laps.empty:
-                return year
-    except Exception:
-        pass
-    return None
-
-# Get available years dynamically using parallel processing
-@cached(years_cache)
-def get_available_years():
-    current_year = 2024  # Set the current year or dynamically get the current year if needed
-    available_years = []
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        results = list(executor.map(check_year_for_silverstone, range(1950, current_year + 1)))
-        available_years = [year for year in results if year is not None]
-    return available_years
-
 # Load race session data
-@cached(drivers_cache)
+@cached(telemetry_cache)
 def load_session(year, event_name, session_type):
     session = fastf1.get_session(year, event_name, session_type)
     session.load()
     return session
-
-# Get all drivers in the race session
-@cached(drivers_cache)
-def get_drivers(session):
-    first_lap = session.laps[session.laps['LapNumber'] == 1]
-    return first_lap['Driver'].unique()
-
-# Function to get X, Y coordinates and speed for a driver's specified lap
-@cached(telemetry_cache)
-def get_coordinates(session, driver_code, lap_number):
-    laps = session.laps.pick_driver(driver_code)
-    
-    if lap_number < 1 or lap_number > len(laps):
-        raise ValueError("Invalid lap number")
-    
-    lap = laps.iloc[lap_number - 1]  # Choose the specified lap
-    
-    car_data = lap.get_car_data()
-    pos_data = lap.get_pos_data()
-    
-    x = pos_data['X'].values
-    y = pos_data['Y'].values
-    speed = car_data['Speed'].values
-    brake = car_data['Brake'].values
-    rpm = car_data['RPM'].values
-    
-    return x, y, speed, brake, rpm
 
 # Define the scale factor based on the global coordinates
 @cached(telemetry_cache)
@@ -105,208 +48,6 @@ def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor)
     
     return adjusted_points
 
-# Function that returns laps weather data as json array [1: data, 2: data, ...] Rainfall
-def get_lap_weather(session, lap_start_time, lap_duration):
-    weather_data = session.laps.get_weather_data()
-    rain = False
-    
-    for index, weather in weather_data.iterrows():
-        if lap_start_time <= weather['Time'] <= (lap_start_time + lap_duration):
-            rain = rain or bool(weather['Rainfall']) if not pd.isnull(weather['Rainfall']) else False
-    
-    return rain
-
-@app.route('/years', methods=['GET'])
-async def get_years(request):
-    years = get_available_years()
-    return json(years)
-
-@app.route('/drivers/<year:int>/<session_type>', methods=['GET'])
-async def get_drivers_by_year(request, year, session_type):
-    session = load_session(year, 'Silverstone', session_type)
-    drivers = get_drivers(session)
-    return json(drivers.tolist())
-
-@app.route('/laps/<year:int>/<session_type>/<driver_code>', methods=['GET'])
-async def get_laps_by_driver(request, year, session_type, driver_code):
-    session = load_session(year, 'Silverstone', session_type)
-    laps = session.laps.pick_driver(driver_code)
-    lap_numbers = list(range(1, len(laps) + 1))
-    return json(lap_numbers)
-
-
-@app.route('/telemetry/<year:int>/<session_type>/<driver_code>/<lap_number:int>', methods=['GET'])
-async def get_telemetry(request, year, session_type, driver_code, lap_number):
-    session = load_session(year, 'Silverstone', session_type)
-    
-    # Load necessary data
-    session.load(laps=True, telemetry=True)
-    
-    # Get coordinates for the reference lap (using the first lap of the pole sitter)
-    reference_x, reference_y, _, _, _ = get_coordinates(session, driver_code, 1)
-    
-    reference_x = REFERENCE_X
-    reference_y = REFERENCE_Y
-
-    global_min_x = PREDEFINED_GLOBAL_MIN_X
-    global_max_x = PREDEFINED_GLOBAL_MAX_X
-    global_min_y = PREDEFINED_GLOBAL_MIN_Y
-    global_max_y = PREDEFINED_GLOBAL_MAX_Y
-        
-    scale_factor = get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y)
-    
-    # Get coordinates, speed, and brake data for the selected driver and lap
-    x, y, speed, brake, rpm = get_coordinates(session, driver_code, lap_number)
-    adjusted_points = adjust_coordinates(x, y, reference_x[0], reference_y[0], scale_factor)
-    
-    # Get the lap data
-    laps = session.laps.pick_driver(driver_code)
-    
-    try:
-        lap = laps.iloc[lap_number - 1]
-        lap_duration = lap['LapTime'].total_seconds() if not pd.isnull(lap['LapTime']) else None
-    except IndexError:
-        lap_duration = None
-
-    if lap_duration is None:
-        # Use telemetry data to calculate lap duration if LapTime is missing
-        telemetry_data = session.laps.pick_driver(driver_code).pick_lap(lap_number).get_telemetry()
-        if not telemetry_data.empty:
-            lap_start_time = telemetry_data.iloc[0]['Time']
-            lap_end_time = telemetry_data.iloc[-1]['Time']
-            lap_duration = (lap_end_time - lap_start_time).total_seconds()
-        else:
-            # Fallback: Estimate lap duration using the average of surrounding laps
-            previous_laps = laps.iloc[max(0, lap_number - 5):lap_number - 1]
-            next_laps = laps.iloc[lap_number:min(lap_number + 5, len(laps))]
-            surrounding_laps = pd.concat([previous_laps, next_laps])
-            estimated_duration = surrounding_laps['LapTime'].mean().total_seconds() if not surrounding_laps['LapTime'].isnull().all() else 30
-            lap_duration = estimated_duration
-
-    lap_duration = pd.Timedelta(seconds=lap_duration)  # Convert lap duration back to Timedelta
-
-    # Retrieve flag data
-    track_status = session.track_status
-    flag_data = []
-    
-    for index, row in track_status.iterrows():
-        if index < len(track_status) - 1:
-            next_row = track_status.iloc[index + 1]
-
-        if lap['LapStartTime'] <= row['Time'] <= (lap['LapStartTime'] + lap_duration):
-            start_time = (row['Time'] - lap['LapStartTime']).total_seconds()
-            end_time = (next_row['Time'] - lap['LapStartTime']).total_seconds() if next_row['Time'] <= (lap['LapStartTime'] + lap_duration) else lap_duration.total_seconds()
-            flag_data.append({
-                'start_time': start_time,
-                'end_time': end_time,
-                'flag': row['Status']
-            })
-
-    # Check if it was raining during the selected lap
-    rain = get_lap_weather(session, lap['LapStartTime'], lap_duration)
-
-    return json({
-        'telemetry': adjusted_points,
-        'lap_duration': lap_duration.total_seconds(),  # Convert to seconds for JSON response
-        'speed': speed.tolist(),  # Include speed data as an array
-        'brake': brake.tolist(),  # Include brake data as an array
-        'rpm': rpm.tolist(),  # Include RPM data as an array
-        'flags': flag_data,  # Include flag data with start and end times
-        'is_rain': rain,  # Include rain information for the selected lap
-    })
-
-@app.route('/all-telemetry/<year:int>/<session_type>/<lap_number:int>', methods=['GET'])
-async def get_all_telemetry(request, year, session_type, lap_number):
-    session = load_session(year, 'Silverstone', session_type)
-    
-    # Load necessary data
-    session.load(laps=True, telemetry=True)
-
-    # Get all drivers in the session
-    drivers = get_drivers(session)
-    
-    # Function to process telemetry data for a driver
-    def process_driver_telemetry(driver_code):
-        try:
-            # Get coordinates, speed, and brake data for the selected driver and lap
-            x, y, speed, brake, rpm = get_coordinates(session, driver_code, lap_number)
-            adjusted_points = adjust_coordinates(x, y, REFERENCE_X[0], REFERENCE_Y[0], get_scale_factor(
-                PREDEFINED_GLOBAL_MIN_X, PREDEFINED_GLOBAL_MAX_X, PREDEFINED_GLOBAL_MIN_Y, PREDEFINED_GLOBAL_MAX_Y
-            ))
-
-            # Get the lap duration
-            laps = session.laps.pick_driver(driver_code)
-            try:
-                lap = laps.iloc[lap_number - 1]
-                lap_duration = lap['LapTime'].total_seconds() if not pd.isnull(lap['LapTime']) else None
-            except IndexError:
-                lap_duration = None
-
-            if lap_duration is None:
-                # Use telemetry data to calculate lap duration if LapTime is missing
-                telemetry_data = session.laps.pick_driver(driver_code).pick_lap(lap_number).get_telemetry()
-                if not telemetry_data.empty:
-                    lap_start_time = telemetry_data.iloc[0]['Time']
-                    lap_end_time = telemetry_data.iloc[-1]['Time']
-                    lap_duration = (lap_end_time - lap_start_time).total_seconds()
-                else:
-                    # Fallback: Estimate lap duration using the average of surrounding laps
-                    previous_laps = laps.iloc[max(0, lap_number - 5):lap_number - 1]
-                    next_laps = laps.iloc[lap_number:min(lap_number + 5, len(laps))]
-                    surrounding_laps = pd.concat([previous_laps, next_laps])
-                    estimated_duration = surrounding_laps['LapTime'].mean().total_seconds() if not surrounding_laps['LapTime'].isnull().all() else 30
-                    lap_duration = estimated_duration
-
-            lap_duration = pd.Timedelta(seconds=lap_duration)  # Convert lap duration back to Timedelta
-
-            # Retrieve flag data
-            track_status = session.track_status
-            flag_data = []
-
-            for index, row in track_status.iterrows():
-                if index < len(track_status) - 1:
-                    next_row = track_status.iloc[index + 1]
-
-                if lap['LapStartTime'] <= row['Time'] <= (lap['LapStartTime'] + lap_duration):
-                    start_time = (row['Time'] - lap['LapStartTime']).total_seconds()
-                    end_time = (next_row['Time'] - lap['LapStartTime']).total_seconds() if next_row['Time'] <= (lap['LapStartTime'] + lap_duration) else lap_duration.total_seconds()
-                    flag_data.append({
-                        'start_time': start_time,
-                        'end_time': end_time,
-                        'flag': row['Status']
-                    })
-
-            # Check if it was raining during the selected lap
-            rain = get_lap_weather(session, lap['LapStartTime'], lap_duration)
-
-            return {
-                driver_code: {
-                    'telemetry': adjusted_points,
-                    'lap_duration': lap_duration.total_seconds(),  # Convert to seconds for JSON response
-                    'speed': speed.tolist(),  # Include speed data as an array
-                    'brake': brake.tolist(),  # Include brake data as an array
-                    'rpm': rpm.tolist(),  # Include RPM data as an array
-                    'flags': flag_data,  # Include flag data with start and end times
-                    'is_rain': rain,  # Include rain information for the selected lap
-                }
-            }
-        except Exception as e:
-            print(f"Error processing telemetry for driver {driver_code}: {e}")
-            return {}
-
-    # Use a ThreadPoolExecutor to process drivers in parallel
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        results = list(executor.map(process_driver_telemetry, drivers))
-    
-    # Merge results into a single dictionary
-    all_telemetry_data = {}
-    for result in results:
-        all_telemetry_data.update(result)
-
-    return json(all_telemetry_data)
-
-
-
 def convert_timedelta_to_str(df):
     for column in df.select_dtypes(include=['timedelta']):
         df[column] = df[column].apply(lambda x: str(x.total_seconds()) if not pd.isnull(x) else None)
@@ -318,10 +59,7 @@ def convert_special_values_to_null(df):
 
 @app.get('/timing/<year:int>/<session_type>')
 async def get_timing(request, year, session_type):
-    session = fastf1.get_session(year, 'Silverstone', session_type)
-    
-    # Load necessary data
-    session.load(laps=True, telemetry=True)
+    session = load_session(year, 'Silverstone', session_type)
 
     session_drivers = session.drivers
 
@@ -332,6 +70,13 @@ async def get_timing(request, year, session_type):
 
     laps_data, stream_data = fastf1.api.timing_data(session.api_path)
     
+    track_status = fastf1.api.track_status_data(session.api_path)
+    track_status['Time'] = [x.total_seconds() for x in track_status['Time']]
+    track_status_json = [
+        {'Time': time, 'Status': status, 'Message': message}
+        for time, status, message in zip(track_status['Time'], track_status['Status'], track_status['Message'])
+    ]
+
     # Sürücü numaralarından oluşan set
     laps_drivers = set(laps_data['Driver'].unique())
     stream_drivers = set(stream_data['Driver'].unique())
@@ -436,6 +181,18 @@ async def get_timing(request, year, session_type):
     last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
     session_end_time = last_lap_data['Time'].max()
 
+    weather_data = session.weather_data
+    weather_data = convert_timedelta_to_str(weather_data)
+    weather_data = convert_special_values_to_null(weather_data)
+
+    weather_data_json = [
+        {
+            'Time': time,
+            'Rainfall': rainfall,
+        }
+        for time, rainfall in zip(weather_data['Time'], weather_data['Rainfall'])
+    ]
+
     return json({
         'total_laps': total_laps,
         'session_start_time': str(session.session_start_time.total_seconds()),
@@ -444,15 +201,14 @@ async def get_timing(request, year, session_type):
         'driver_status': driver_status_data,
         'laps_data': laps_data.to_dict(orient='records'),
         'stream_data': stream_data.to_dict(orient='records'),
+        'track_status': track_status_json,
+        'weather_data': weather_data_json
     })
 
 
-@app.route('/new-telemetry/<year:int>/<session_type>', methods=['GET'])
-async def new_telemetry(request, year, session_type):
-    session = await asyncio.to_thread(fastf1.get_session, year, 'Silverstone', session_type)
-    
-    # Load necessary data
-    await asyncio.to_thread(session.load, laps=True, telemetry=True)
+@app.route('/telemetry/<year:int>/<session_type>', methods=['GET'])
+async def telemetry(request, year, session_type):
+    session = load_session(year, 'Silverstone', session_type)
     
     # Get unique driver codes
     driver_codes = session.laps['Driver'].unique()
@@ -485,7 +241,7 @@ async def new_telemetry(request, year, session_type):
 
             if lap_duration is None:
                 # Use telemetry data to calculate lap duration if LapTime is missing
-                telemetry_data = laps.pick_lap(lap_number).get_telemetry()
+                telemetry_data = laps.pick_lap(lap_number).get_car_data()
                 if not telemetry_data.empty:
                     lap_start_time = telemetry_data.iloc[0]['SessionTime'].total_seconds() if i == 0 else lap_start_time
                     lap_end_time = telemetry_data.iloc[-1]['SessionTime'].total_seconds()
