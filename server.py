@@ -2,15 +2,13 @@ from sanic import Sanic
 from sanic.response import json
 from sanic_cors import CORS
 import fastf1
-import concurrent.futures
 from cachetools import TTLCache, cached
 import pandas as pd
-from constants import *
-from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import fastf1.api
 import asyncio
 from sanic_gzip import Compress
+from constants import *
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
@@ -18,7 +16,6 @@ fastf1.Cache.enable_cache('f1cache')
 # Initialize Sanic app
 app = Sanic("F1TelemetryAPI")
 CORS(app)  # Enable CORS for all routes
-
 compress = Compress()
 
 # Create caches for different routes
@@ -43,12 +40,9 @@ def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
 # Function to adjust coordinates with a common reference point and global scaling
 def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor):
     adjusted_points = [
-        [((x - ref_x) * scale_factor), 
-         0, 
-         ((y - ref_y) * scale_factor)]
+        [((x - ref_x) * scale_factor), 0, ((y - ref_y) * scale_factor)]
         for x, y in zip(x_coordinates, y_coordinates)
     ]
-    
     return adjusted_points
 
 def convert_timedelta_to_str(df):
@@ -61,64 +55,41 @@ def convert_special_values_to_null(df):
     return df
 
 @app.get('/timing/<year:int>/<session_type>')
+@compress.compress()
 async def get_timing(request, year, session_type):
     session = load_session(year, 'Silverstone', session_type)
-
     session_drivers = session.drivers
 
-    driver_enum = {}
-
-    for driver in session.drivers:
-        driver_enum[driver] = session.get_driver(driver).Abbreviation
+    driver_enum = {driver: session.get_driver(driver).Abbreviation for driver in session.drivers}
 
     laps_data, stream_data = fastf1.api.timing_data(session.api_path)
-    
     track_status = fastf1.api.track_status_data(session.api_path)
     track_status['Time'] = [x.total_seconds() for x in track_status['Time']]
-    track_status_json = [
-        {'Time': time, 'Status': status, 'Message': message}
-        for time, status, message in zip(track_status['Time'], track_status['Status'], track_status['Message'])
-    ]
+    track_status_json = [{'Time': time, 'Status': status, 'Message': message} for time, status, message in zip(track_status['Time'], track_status['Status'], track_status['Message'])]
 
-    # Sürücü numaralarından oluşan set
     laps_drivers = set(laps_data['Driver'].unique())
     stream_drivers = set(stream_data['Driver'].unique())
 
-    # Session sürücülerinin verisi olmayanları kontrol et
     laps_missing_drivers = set(session_drivers) - laps_drivers
     stream_missing_drivers = set(session_drivers) - stream_drivers
-
-    # print("Laps data missing drivers:", laps_missing_drivers)
-    # print("Stream data missing drivers:", stream_missing_drivers)
-
     missing_drivers = laps_missing_drivers.union(stream_missing_drivers)
-    print("Total missing drivers:", missing_drivers)
 
     new_stream_data = []
     new_laps_data = []
-    
+
     for driver in missing_drivers:
-
         driver_info = session.get_driver(driver)
-        
         driver_short_name = driver_info.Abbreviation
-
         laps = session.laps.pick_driver(driver)
-
-        lap = laps.iloc[0]  # İlk turu seç
-
+        lap = laps.iloc[0]
         telemetry = lap.get_telemetry()
-
         telemetry_data = telemetry[['RPM', 'Speed', 'nGear', 'Throttle', 'Brake', 'DRS']]
-
-        # Sabit veri kontrolü
         same_data_count = (telemetry_data.shift() == telemetry_data).all(axis=1).astype(int).groupby(telemetry_data.index // 40).sum()
         constant_data = same_data_count[same_data_count == 40]
 
         if not constant_data.empty:
             session_time_first = telemetry['SessionTime'].iloc[0]
             session_time_last = telemetry['SessionTime'].iloc[constant_data.index[0] * 40]
-            print(f"Sürücü {driver_short_name} yarış dışı kaldı. SessionTime: {session_time_last}")
 
             new_stream_data.append({
                 'Time': session_time_first,
@@ -127,7 +98,6 @@ async def get_timing(request, year, session_type):
                 'GapToLeader': None,
                 'IntervalToPositionAhead': None
             })
-            
             new_stream_data.append({
                 'Time': session_time_last,
                 'Driver': driver,
@@ -161,7 +131,6 @@ async def get_timing(request, year, session_type):
 
     laps_data.insert(2, 'DriverName', laps_data['Driver'].map(driver_enum))
     laps_data.insert(3, 'TeamColor', laps_data['Driver'].map(lambda x: "#" + session.get_driver(x).TeamColor))
-
     stream_data.insert(2, 'DriverName', stream_data['Driver'].map(driver_enum))
 
     laps_data = convert_timedelta_to_str(laps_data)
@@ -170,16 +139,12 @@ async def get_timing(request, year, session_type):
     stream_data = convert_timedelta_to_str(stream_data)
     stream_data = convert_special_values_to_null(stream_data)
 
-    # Tamamlanan tur ve sürücü durumu verilerini ekleyin
-    completed_laps_data = {}
-    driver_status_data = {}
+    completed_laps_data = {driver: len(session.laps.pick_driver(driver)) for driver in session.drivers}
+    driver_status_data = {
+        driver: "Finished" if len(session.laps.pick_driver(driver)) == session.total_laps else "+1 Lap" if len(session.laps.pick_driver(driver)) == session.total_laps - 1 else "DNF"
+        for driver in session.drivers
+    }
 
-    for driver in session.drivers:
-        laps = session.laps.pick_driver(driver)
-        completed_laps_data[driver] = len(laps)
-        driver_status_data[driver] = "Finished" if len(laps) == session.total_laps else "+1 Lap" if len(laps) == session.total_laps - 1 else "DNF"
-
-    #Find session end time by checking last lap time last driver finished is end of session
     total_laps = session.total_laps
     last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
     session_end_time = last_lap_data['Time'].max()
@@ -188,13 +153,7 @@ async def get_timing(request, year, session_type):
     weather_data = convert_timedelta_to_str(weather_data)
     weather_data = convert_special_values_to_null(weather_data)
 
-    weather_data_json = [
-        {
-            'Time': time,
-            'Rainfall': rainfall,
-        }
-        for time, rainfall in zip(weather_data['Time'], weather_data['Rainfall'])
-    ]
+    weather_data_json = [{'Time': time, 'Rainfall': rainfall} for time, rainfall in zip(weather_data['Time'], weather_data['Rainfall'])]
 
     return json({
         'total_laps': total_laps,
@@ -210,48 +169,30 @@ async def get_timing(request, year, session_type):
 
 @app.route('/telemetry/<year:int>/<session_type>', methods=['GET'])
 @compress.compress()
-async def test(request, year, session_type):
+async def telemetry(request, year, session_type):
     session = load_session(year, 'Silverstone', session_type)
     drivers = session.drivers
-    
-    def process_driver_data(driver_code):
-        # Belirtilen sürücünün pozisyon verilerini al
-        laps = session.laps.pick_driver(driver_code)
-        # telemetry = laps.get_telemetry()
 
+    def process_driver_data(driver_code):
+        laps = session.laps.pick_driver(driver_code)
         car_data = laps.get_car_data()
         pos_data = laps.get_pos_data()
 
-        # Her iki veri çerçevesinin de SessionTime sütunlarının sıralı olduğundan emin olun
         pos_data = pos_data.sort_values(by='SessionTime')
         car_data = car_data.sort_values(by='SessionTime')
 
-        # merge_asof kullanarak en yakın eşleşmeyi bul ve birleştir
         telemetry = pd.merge_asof(pos_data, car_data, on='SessionTime', direction='nearest')
-
-        
-        # Telemetri verilerini total_seconds formatına çevir
         telemetry['SessionTime (s)'] = telemetry['SessionTime'].dt.total_seconds()
-        
-        # Koordinatları ayarla
         adjusted_points = adjust_coordinates(
-            telemetry['X'].values, 
-            telemetry['Y'].values, 
-            REFERENCE_X[0], 
-            REFERENCE_Y[0], 
+            telemetry['X'].values,
+            telemetry['Y'].values,
+            REFERENCE_X[0],
+            REFERENCE_Y[0],
             get_scale_factor(PREDEFINED_GLOBAL_MIN_X, PREDEFINED_GLOBAL_MAX_X, PREDEFINED_GLOBAL_MIN_Y, PREDEFINED_GLOBAL_MAX_Y)
         )
-        
-        # Her bir zaman damgası için koordinatları içeren listeyi oluştur
         telemetry['AdjustedCoordinates'] = list(adjusted_points)
-        
-        telemetry.rename(columns={
-            'SessionTime (s)': 'timestamp',
-            'AdjustedCoordinates': 'coordinates'
-        }, inplace=True)
-
+        telemetry.rename(columns={'SessionTime (s)': 'timestamp', 'AdjustedCoordinates': 'coordinates'}, inplace=True)
         formatted_telemetry_list = telemetry[['timestamp', 'coordinates', 'Brake', 'RPM']].to_dict('records')
-
         return formatted_telemetry_list
 
     async def process_driver(driver):
@@ -263,7 +204,7 @@ async def test(request, year, session_type):
             "teamColor": "#" + driver_info.TeamColor,
             "path": driver_data
         }
-    
+
     results = {
         "cars": await asyncio.gather(*(process_driver(driver) for driver in drivers))
     }
