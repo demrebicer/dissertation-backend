@@ -1,0 +1,9 @@
+sanic
+sanic-cors
+fastf1
+cachetools
+pandas
+numpy
+sanic-gzip
+httpx
+ujson

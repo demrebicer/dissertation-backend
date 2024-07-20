@@ -1,5 +1,5 @@
 import gzip
-from sanic import Sanic
+from sanic import Sanic, response
 from sanic.response import json
 from sanic_cors import CORS
 import fastf1
@@ -14,6 +14,7 @@ from sanic.exceptions import ServiceUnavailable
 import httpx
 import sqlite3
 import ujson
+import os
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
@@ -39,15 +40,14 @@ CREATE TABLE IF NOT EXISTS api_responses (
 ''')
 conn.commit()
 
-
 @app.on_request
-@compress.compress()
+# @compress.compress()
 async def check_ergast_api_status(request):
     route = request.path
-    async with httpx.AsyncClient(timeout=5) as client:
+    async with httpx.AsyncClient(timeout=10) as client:
         print("Ergast API Status is checking...")
         try:
-            response = await client.get('https://ergast.com/api')
+            response = await client.get('https://ergast.com/api/f1/2021/10/results.json')
             if response.status_code != 200:
                 raise ServiceUnavailable("Ergast API is not available")
         except httpx.RequestError:
@@ -60,19 +60,16 @@ async def check_ergast_api_status(request):
                 raise ServiceUnavailable(
                     "Ergast API is not available and no cached response found")
 
-
 def save_response_to_db(route, response):
     cursor.execute(
         'REPLACE INTO api_responses (route, response) VALUES (?, ?)', (route, response))
     conn.commit()
-
 
 def get_response_from_db(route):
     cursor.execute(
         'SELECT response FROM api_responses WHERE route = ?', (route,))
     row = cursor.fetchone()
     return row[0] if row else None
-
 
 @app.middleware('response')
 async def save_response(request, response):
@@ -93,8 +90,6 @@ async def save_response(request, response):
             # Diğer olası hataları yakalayın ve bildirin
             print(f"An unexpected error occurred for route {request.path}. Error: {e}")
 
-
-
 @cached(telemetry_cache)
 def load_session(year, event_name, session_type):
     session = fastf1.get_session(year, event_name, session_type)
@@ -102,8 +97,6 @@ def load_session(year, event_name, session_type):
     return session
 
 # Define the scale factor based on the global coordinates
-
-
 @cached(telemetry_cache)
 def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
     range_x = global_max_x - global_min_x
@@ -113,8 +106,6 @@ def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
     return scale_factor
 
 # Function to adjust coordinates with a common reference point and global scaling
-
-
 def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor):
     adjusted_points = [
         [((x - ref_x) * scale_factor), 0, ((y - ref_y) * scale_factor)]
@@ -122,13 +113,11 @@ def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor)
     ]
     return adjusted_points
 
-
 def convert_timedelta_to_str(df):
     for column in df.select_dtypes(include=['timedelta']):
         df[column] = df[column].apply(lambda x: str(
             x.total_seconds()) if not pd.isnull(x) else None)
     return df
-
 
 def convert_special_values_to_null(df):
     df = df.replace([pd.NaT, np.nan], None)
@@ -255,7 +244,6 @@ async def get_timing(request, year, session_type):
         'weather_data': weather_data_json
     })
 
-
 @app.route('/telemetry/<year:int>/<session_type>', methods=['GET'])
 @compress.compress()
 async def telemetry(request, year, session_type):
@@ -307,5 +295,5 @@ async def telemetry(request, year, session_type):
 
 # Run the app
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000, access_log=True,
-            auto_reload=True, fast=True)
+    port = int(os.getenv('PORT', 8000))
+    app.run(host='0.0.0.0', port=port, access_log=True, auto_reload=True, fast=True)

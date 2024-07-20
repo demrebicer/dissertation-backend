@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  f1-telemetry-api:
+    build: .
+    ports:
+      - "80:8000"
+    environment:
+      - PORT=8000
+    networks:
+      - f1-network
+
+networks:
+  f1-network:
+    driver: bridge
