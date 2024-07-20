@@ -44,7 +44,7 @@ conn.commit()
 # @compress.compress()
 async def check_ergast_api_status(request):
     route = request.path
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=5) as client:
         print("Ergast API Status is checking...")
         try:
             response = await client.get('https://ergast.com/api/f1/2021/10/results.json')
