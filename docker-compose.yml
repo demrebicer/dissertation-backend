@@ -4,7 +4,7 @@ services:
   f1-telemetry-api:
     build: .
     ports:
-      - "80:8000"
+      - "8000:8000"
     environment:
       - PORT=8000
     networks:
