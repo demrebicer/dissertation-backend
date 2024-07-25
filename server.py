@@ -18,6 +18,7 @@ import os
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
+fastf1.Cache.offline_mode(True)
 
 # Initialize Sanic app
 app = Sanic("F1TelemetryAPI")
@@ -40,55 +41,55 @@ CREATE TABLE IF NOT EXISTS api_responses (
 ''')
 conn.commit()
 
-@app.on_request
-# @compress.compress()
-async def check_ergast_api_status(request):
-    route = request.path
-    async with httpx.AsyncClient(timeout=5) as client:
-        print("Ergast API Status is checking...")
-        try:
-            response = await client.get('https://ergast.com/api/f1/2021/10/results.json')
-            if response.status_code != 200:
-                raise ServiceUnavailable("Ergast API is not available")
-        except httpx.RequestError:
-            cached_response = get_response_from_db(route)
+# @app.on_request
+# # @compress.compress()
+# async def check_ergast_api_status(request):
+#     route = request.path
+#     async with httpx.AsyncClient(timeout=5) as client:
+#         print("Ergast API Status is checking...")
+#         try:
+#             response = await client.get('https://ergast.com/api/f1/2021/10/results.json')
+#             if response.status_code != 200:
+#                 raise ServiceUnavailable("Ergast API is not available")
+#         except httpx.RequestError:
+#             cached_response = get_response_from_db(route)
 
-            if cached_response:
-                cached_response = ujson.loads(cached_response)
-                return json(cached_response)
-            else:
-                raise ServiceUnavailable(
-                    "Ergast API is not available and no cached response found")
+#             if cached_response:
+#                 cached_response = ujson.loads(cached_response)
+#                 return json(cached_response)
+#             else:
+#                 raise ServiceUnavailable(
+#                     "Ergast API is not available and no cached response found")
 
-def save_response_to_db(route, response):
-    cursor.execute(
-        'REPLACE INTO api_responses (route, response) VALUES (?, ?)', (route, response))
-    conn.commit()
+# def save_response_to_db(route, response):
+#     cursor.execute(
+#         'REPLACE INTO api_responses (route, response) VALUES (?, ?)', (route, response))
+#     conn.commit()
 
-def get_response_from_db(route):
-    cursor.execute(
-        'SELECT response FROM api_responses WHERE route = ?', (route,))
-    row = cursor.fetchone()
-    return row[0] if row else None
+# def get_response_from_db(route):
+#     cursor.execute(
+#         'SELECT response FROM api_responses WHERE route = ?', (route,))
+#     row = cursor.fetchone()
+#     return row[0] if row else None
 
-@app.middleware('response')
-async def save_response(request, response):
-    if response.status == 200 and response.content_type == 'application/json':
-        try:
-            # Yanıtın gzip sıkıştırılmış olup olmadığını kontrol edin
-            if response.headers.get('Content-Encoding') == 'gzip':
-                response_body = gzip.decompress(response.body)
-                response_body = response_body.decode('utf-8')
-            else:
-                response_body = response.body.decode('utf-8')
+# @app.middleware('response')
+# async def save_response(request, response):
+#     if response.status == 200 and response.content_type == 'application/json':
+#         try:
+#             # Yanıtın gzip sıkıştırılmış olup olmadığını kontrol edin
+#             if response.headers.get('Content-Encoding') == 'gzip':
+#                 response_body = gzip.decompress(response.body)
+#                 response_body = response_body.decode('utf-8')
+#             else:
+#                 response_body = response.body.decode('utf-8')
             
-            save_response_to_db(request.path, response_body)
-        except (UnicodeDecodeError, OSError) as e:
-            # Hata ayıklama için yanıt gövdesinin ilk 100 baytını yazdırın
-            print(f"Failed to decode response body for route {request.path}. Error: {e}. Response body (first 100 bytes): {response.body[:100]}")
-        except Exception as e:
-            # Diğer olası hataları yakalayın ve bildirin
-            print(f"An unexpected error occurred for route {request.path}. Error: {e}")
+#             save_response_to_db(request.path, response_body)
+#         except (UnicodeDecodeError, OSError) as e:
+#             # Hata ayıklama için yanıt gövdesinin ilk 100 baytını yazdırın
+#             print(f"Failed to decode response body for route {request.path}. Error: {e}. Response body (first 100 bytes): {response.body[:100]}")
+#         except Exception as e:
+#             # Diğer olası hataları yakalayın ve bildirin
+#             print(f"An unexpected error occurred for route {request.path}. Error: {e}")
 
 @cached(telemetry_cache)
 def load_session(year, event_name, session_type):
