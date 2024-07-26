@@ -11,14 +11,11 @@ import asyncio
 from sanic_gzip import Compress
 from constants import *
 from sanic.exceptions import ServiceUnavailable
-import httpx
-import sqlite3
-import ujson
 import os
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
-fastf1.Cache.offline_mode(True)
+# fastf1.Cache.offline_mode(True)
 
 # Initialize Sanic app
 app = Sanic("F1TelemetryAPI")
@@ -28,69 +25,6 @@ compress = Compress()
 # Create caches for different routes
 telemetry_cache = TTLCache(maxsize=100, ttl=86400)
 
-# Initialize SQLite connection
-conn = sqlite3.connect('f1data.sqlite')
-cursor = conn.cursor()
-
-# Create table for storing API responses
-cursor.execute('''
-CREATE TABLE IF NOT EXISTS api_responses (
-    route TEXT PRIMARY KEY,
-    response TEXT
-)
-''')
-conn.commit()
-
-# @app.on_request
-# # @compress.compress()
-# async def check_ergast_api_status(request):
-#     route = request.path
-#     async with httpx.AsyncClient(timeout=5) as client:
-#         print("Ergast API Status is checking...")
-#         try:
-#             response = await client.get('https://ergast.com/api/f1/2021/10/results.json')
-#             if response.status_code != 200:
-#                 raise ServiceUnavailable("Ergast API is not available")
-#         except httpx.RequestError:
-#             cached_response = get_response_from_db(route)
-
-#             if cached_response:
-#                 cached_response = ujson.loads(cached_response)
-#                 return json(cached_response)
-#             else:
-#                 raise ServiceUnavailable(
-#                     "Ergast API is not available and no cached response found")
-
-# def save_response_to_db(route, response):
-#     cursor.execute(
-#         'REPLACE INTO api_responses (route, response) VALUES (?, ?)', (route, response))
-#     conn.commit()
-
-# def get_response_from_db(route):
-#     cursor.execute(
-#         'SELECT response FROM api_responses WHERE route = ?', (route,))
-#     row = cursor.fetchone()
-#     return row[0] if row else None
-
-# @app.middleware('response')
-# async def save_response(request, response):
-#     if response.status == 200 and response.content_type == 'application/json':
-#         try:
-#             # Yanıtın gzip sıkıştırılmış olup olmadığını kontrol edin
-#             if response.headers.get('Content-Encoding') == 'gzip':
-#                 response_body = gzip.decompress(response.body)
-#                 response_body = response_body.decode('utf-8')
-#             else:
-#                 response_body = response.body.decode('utf-8')
-            
-#             save_response_to_db(request.path, response_body)
-#         except (UnicodeDecodeError, OSError) as e:
-#             # Hata ayıklama için yanıt gövdesinin ilk 100 baytını yazdırın
-#             print(f"Failed to decode response body for route {request.path}. Error: {e}. Response body (first 100 bytes): {response.body[:100]}")
-#         except Exception as e:
-#             # Diğer olası hataları yakalayın ve bildirin
-#             print(f"An unexpected error occurred for route {request.path}. Error: {e}")
-
 @cached(telemetry_cache)
 def load_session(year, event_name, session_type):
     session = fastf1.get_session(year, event_name, session_type)
@@ -98,6 +32,8 @@ def load_session(year, event_name, session_type):
     return session
 
 # Define the scale factor based on the global coordinates
+
+
 @cached(telemetry_cache)
 def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
     range_x = global_max_x - global_min_x
@@ -107,6 +43,8 @@ def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
     return scale_factor
 
 # Function to adjust coordinates with a common reference point and global scaling
+
+
 def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor):
     adjusted_points = [
         [((x - ref_x) * scale_factor), 0, ((y - ref_y) * scale_factor)]
@@ -114,15 +52,18 @@ def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor)
     ]
     return adjusted_points
 
+
 def convert_timedelta_to_str(df):
     for column in df.select_dtypes(include=['timedelta']):
         df[column] = df[column].apply(lambda x: str(
             x.total_seconds()) if not pd.isnull(x) else None)
     return df
 
+
 def convert_special_values_to_null(df):
     df = df.replace([pd.NaT, np.nan], None)
     return df
+
 
 @app.get('/timing/<year:int>/<session_type>')
 @compress.compress()
@@ -152,7 +93,13 @@ async def get_timing(request, year, session_type):
     for driver in missing_drivers:
         driver_info = session.get_driver(driver)
         driver_short_name = driver_info.Abbreviation
+
         laps = session.laps.pick_driver(driver)
+        
+        # Boş laps kontrolü
+        if laps.empty:
+            continue
+
         lap = laps.iloc[0]
         telemetry = lap.get_telemetry()
         telemetry_data = telemetry[['RPM', 'Speed',
@@ -216,13 +163,16 @@ async def get_timing(request, year, session_type):
 
     completed_laps_data = {driver: len(
         session.laps.pick_driver(driver)) for driver in session.drivers}
+   
+    total_laps = session.total_laps if session.total_laps is not None else 10
+
+    
     driver_status_data = {
-        driver: "Finished" if len(session.laps.pick_driver(driver)) == session.total_laps else "+1 Lap" if len(
-            session.laps.pick_driver(driver)) == session.total_laps - 1 else "DNF"
+        driver: "Finished" if len(session.laps.pick_driver(driver)) == total_laps else "+1 Lap" if len(
+            session.laps.pick_driver(driver)) == total_laps - 1 else "DNF"
         for driver in session.drivers
     }
-
-    total_laps = session.total_laps
+    
     last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
     session_end_time = last_lap_data['Time'].max()
 
@@ -245,6 +195,7 @@ async def get_timing(request, year, session_type):
         'weather_data': weather_data_json
     })
 
+
 @app.route('/telemetry/<year:int>/<session_type>', methods=['GET'])
 @compress.compress()
 async def telemetry(request, year, session_type):
@@ -253,6 +204,9 @@ async def telemetry(request, year, session_type):
 
     def process_driver_data(driver_code):
         laps = session.laps.pick_driver(driver_code)
+        if laps.empty:
+            return None
+
         car_data = laps.get_car_data()
         pos_data = laps.get_pos_data()
 
@@ -261,8 +215,8 @@ async def telemetry(request, year, session_type):
 
         telemetry = pd.merge_asof(
             pos_data, car_data, on='SessionTime', direction='nearest')
-        telemetry['SessionTime (s)'] = telemetry['SessionTime'].dt.total_seconds(
-        )
+        telemetry['SessionTime (s)'] = telemetry['SessionTime'].dt.total_seconds()
+        
         adjusted_points = adjust_coordinates(
             telemetry['X'].values,
             telemetry['Y'].values,
@@ -282,6 +236,8 @@ async def telemetry(request, year, session_type):
         driver_info = session.get_driver(driver)
         driver_code = driver_info.Abbreviation
         driver_data = await asyncio.to_thread(process_driver_data, driver_code)
+        if driver_data is None:
+            return None
         return {
             "id": driver_code,
             "teamColor": "#" + driver_info.TeamColor,
@@ -289,7 +245,7 @@ async def telemetry(request, year, session_type):
         }
 
     results = {
-        "cars": await asyncio.gather(*(process_driver(driver) for driver in drivers))
+        "cars": [car for car in await asyncio.gather(*(process_driver(driver) for driver in drivers)) if car is not None]
     }
 
     return json(results)
@@ -297,4 +253,5 @@ async def telemetry(request, year, session_type):
 # Run the app
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8000))
-    app.run(host='0.0.0.0', port=port, access_log=True, auto_reload=True, fast=True)
+    app.run(host='0.0.0.0', port=port, access_log=True,
+            auto_reload=True, fast=True)
