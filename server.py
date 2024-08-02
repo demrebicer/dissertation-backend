@@ -15,7 +15,7 @@ import os
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
-fastf1.Cache.offline_mode(True)
+# fastf1.Cache.offline_mode(True)
 
 # Initialize Sanic app
 app = Sanic("F1TelemetryAPI")
@@ -24,6 +24,7 @@ compress = Compress()
 
 # Create caches for different routes
 telemetry_cache = TTLCache(maxsize=100, ttl=86400)
+
 
 @cached(telemetry_cache)
 def load_session(year, event_name, session_type):
@@ -72,7 +73,7 @@ async def get_timing(request, year, session_type):
     session_drivers = session.drivers
 
     driver_enum = {driver: session.get_driver(
-        driver).Abbreviation for driver in session.drivers}
+        driver).Abbreviation for driver in session_drivers}
 
     laps_data, stream_data = fastf1.api.timing_data(session.api_path)
     track_status = fastf1.api.track_status_data(session.api_path)
@@ -95,7 +96,7 @@ async def get_timing(request, year, session_type):
         driver_short_name = driver_info.Abbreviation
 
         laps = session.laps.pick_driver(driver)
-        
+
         # Boş laps kontrolü
         if laps.empty:
             continue
@@ -162,27 +163,16 @@ async def get_timing(request, year, session_type):
     stream_data = convert_special_values_to_null(stream_data)
 
     completed_laps_data = {driver: len(
-        session.laps.pick_driver(driver)) for driver in session.drivers}
-    
-    #sort by descending total lap number   "completed_laps": {
-        # "33": 1,
-        # "44": 52,
-        # "77": 52,
-        # "16": 52,
-    
-    completed_laps_data = dict(sorted(completed_laps_data.items(), key=lambda item: item[1], reverse=True))
+        session.laps.pick_driver(driver)) for driver in session_drivers}
 
     total_laps = session.total_laps if session.total_laps is not None else 10
 
-    
     driver_status_data = {
         driver: "Finished" if len(session.laps.pick_driver(driver)) == total_laps else "+1 Lap" if len(
             session.laps.pick_driver(driver)) == total_laps - 1 else "DNF"
-        for driver in session.drivers
+        for driver in session_drivers
     }
 
-    driver_status_data = dict(sorted(driver_status_data.items(), key=lambda item: item[1], reverse=True))
-    
     last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
     session_end_time = last_lap_data['Time'].max()
 
@@ -225,8 +215,9 @@ async def telemetry(request, year, session_type):
 
         telemetry = pd.merge_asof(
             pos_data, car_data, on='SessionTime', direction='nearest')
-        telemetry['SessionTime (s)'] = telemetry['SessionTime'].dt.total_seconds()
-        
+        telemetry['SessionTime (s)'] = telemetry['SessionTime'].dt.total_seconds(
+        )
+
         adjusted_points = adjust_coordinates(
             telemetry['X'].values,
             telemetry['Y'].values,
