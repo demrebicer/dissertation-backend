@@ -15,7 +15,7 @@ import os
 
 # Enable cache
 fastf1.Cache.enable_cache('f1cache')
-# fastf1.Cache.offline_mode(True)
+fastf1.Cache.offline_mode(True)
 
 # Initialize Sanic app
 app = Sanic("F1TelemetryAPI")
