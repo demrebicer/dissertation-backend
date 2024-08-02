@@ -164,14 +164,14 @@ async def get_timing(request, year, session_type):
     completed_laps_data = {driver: len(
         session.laps.pick_driver(driver)) for driver in session.drivers}
     
-    #sort by driver number   "completed_laps": {
+    #sort by descending total lap number   "completed_laps": {
         # "33": 1,
         # "44": 52,
         # "77": 52,
         # "16": 52,
     
-    completed_laps_data = dict(sorted(completed_laps_data.items(), key=lambda item: item[0]))
-   
+    completed_laps_data = dict(sorted(completed_laps_data.items(), key=lambda item: item[1], reverse=True))
+
     total_laps = session.total_laps if session.total_laps is not None else 10
 
     
@@ -181,7 +181,7 @@ async def get_timing(request, year, session_type):
         for driver in session.drivers
     }
 
-    driver_status_data = dict(sorted(driver_status_data.items(), key=lambda item: item[0]))
+    driver_status_data = dict(sorted(driver_status_data.items(), key=lambda item: item[1], reverse=True))
     
     last_lap_data = laps_data[laps_data['NumberOfLaps'] == total_laps]
     session_end_time = last_lap_data['Time'].max()
