@@ -33,8 +33,6 @@ def load_session(year, event_name, session_type):
     return session
 
 # Define the scale factor based on the global coordinates
-
-
 @cached(telemetry_cache)
 def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
     range_x = global_max_x - global_min_x
@@ -44,8 +42,6 @@ def get_scale_factor(global_min_x, global_max_x, global_min_y, global_max_y):
     return scale_factor
 
 # Function to adjust coordinates with a common reference point and global scaling
-
-
 def adjust_coordinates(x_coordinates, y_coordinates, ref_x, ref_y, scale_factor):
     adjusted_points = [
         [((x - ref_x) * scale_factor), 0, ((y - ref_y) * scale_factor)]
@@ -97,7 +93,6 @@ async def get_timing(request, year, session_type):
 
         laps = session.laps.pick_driver(driver)
 
-        # Boş laps kontrolü
         if laps.empty:
             continue
 
@@ -251,7 +246,6 @@ async def telemetry(request, year, session_type):
 
     return json(results)
 
-# Run the app
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8000))
     app.run(host='0.0.0.0', port=port, access_log=True,

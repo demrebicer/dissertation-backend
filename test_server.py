@@ -1,5 +1,5 @@
 import pytest
-from server import app  # Assuming the server.py file is in the same directory
+from server import app 
 from sanic import Sanic, response
 
 @pytest.fixture
