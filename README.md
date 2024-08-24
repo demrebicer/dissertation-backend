@@ -25,17 +25,17 @@ To set up the backend on your local machine, follow these steps:
 
 1. **Create a virtual environment**:
     ```bash
-    python -m venv venv
+    python3 -m venv venv
     source venv/bin/activate  # On Windows use `venv\Scripts\activate`
     ```
 
 2. **Install the dependencies**:
     ```bash
-    pip install -r requirements.txt
+    pip3 install -r requirements.txt
     ```
 3. **Run the server**:
     ```bash
-    python server.py
+    python3 server.py
     ```
 
     The server will run on `http://localhost:8000/`.
